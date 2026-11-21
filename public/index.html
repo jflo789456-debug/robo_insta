@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>InstaFlow Studio — Painel Oficial</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; background: #0f172a; color: #f8fafc; padding: 24px; }
+    .container { max-width: 960px; margin: 0 auto; }
+    header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; border-bottom: 1px solid #1e293b; padding-bottom: 16px; }
+    h1 { margin: 0; font-size: 1.5rem; background: linear-gradient(90deg, #f472b6, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .badge { padding: 6px 12px; border-radius: 999px; font-size: 0.85rem; font-weight: 600; background: #1e293b; }
+    .badge.ok { background: #064e3b; color: #6ee7b7; }
+    .badge.warn { background: #78350f; color: #fcd34d; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+    .tab { background: #1e293b; color: #cbd5e1; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+    .tab.active { background: #9333ea; color: #fff; }
+    .card { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    label { display: block; font-size: 0.85rem; color: #94a3b8; margin: 10px 0 4px; }
+    input, select, textarea { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; }
+    button.primary { margin-top: 14px; background: #9333ea; color: #fff; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+    button.danger { background: #dc2626; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
+    .rule-item { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 12px; background: #0f172a; border-radius: 8px; margin-top: 10px; }
+    .hidden { display: none; }
+    code { background: #0f172a; padding: 4px 8px; border-radius: 6px; color: #38bdf8; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>InstaFlow Studio</h1>
+      <div id="statusBadge" class="badge">Carregando status...</div>
+    </header>
+
+    <div class="tabs">
+      <button class="tab active" onclick="showTab('rules', this)">Automações (Posts, Reels e DMs)</button>
+      <button class="tab" onclick="showTab('broadcast', this)">Disparo em Massa (24h)</button>
+      <button class="tab" onclick="showTab('config', this)">Configuração Meta</button>
+    </div>
+
+    <div id="tab-rules">
+      <div class="card">
+        <h3>Nova Automação</h3>
+        <label>Onde ativar?</label>
+        <select id="rType">
+          <option value="comment">Comentário em Post / Reel</option>
+          <option value="dm">Mensagem no Direct / Resposta de Story</option>
+        </select>
+        <label>Palavra-chave (gatilho)</label>
+        <input id="rKeyword" placeholder="Ex: QUERO, LINK, PRECO" />
+        <label>Resposta pública no comentário (opcional)</label>
+        <input id="rPublic" placeholder="Ex: Te enviei no Direct! 😉" />
+        <label>Mensagem enviada no Direct (DM)</label>
+        <textarea id="rDm" rows="3" placeholder="Olá! Aqui está o link que você pediu..."></textarea>
+        <label>Texto do botão (opcional)</label>
+        <input id="rBtnText" placeholder="Ex: Acessar agora" />
+        <label>Link do botão (opcional)</label>
+        <input id="rBtnUrl" placeholder="https://seusite.com" />
+        <button class="primary" onclick="addRule()">Salvar Automação</button>
+      </div>
+
+      <div class="card">
+        <h3>Automações Ativas</h3>
+        <div id="rulesList">Carregando...</div>
+      </div>
+    </div>
+
+    <div id="tab-broadcast" class="hidden">
+      <div class="card">
+        <h3>Disparo em Massa (Contatos ativos nas últimas 24h)</h3>
+        <p id="contactsInfo" style="color:#94a3b8;">Carregando contatos...</p>
+        <label>Mensagem da campanha</label>
+        <textarea id="bText" rows="3" placeholder="Oi! Passando para avisar da condição especial de hoje..."></textarea>
+        <label>Texto do botão (opcional)</label>
+        <input id="bBtnText" placeholder="Ver oferta" />
+        <label>Link do botão (opcional)</label>
+        <input id="bBtnUrl" placeholder="https://seusite.com" />
+        <button class="primary" onclick="sendBroadcast()">Disparar agora</button>
+        <p id="bResult" style="margin-top:10px;color:#6ee7b7;"></p>
+      </div>
+    </div>
+
+    <div id="tab-config" class="hidden">
+      <div class="card">
+        <h3>Dados para colar na Etapa 3 do Meta for Developers</h3>
+        <p><strong>URL de Callback do Webhook:</strong><br /><code id="webhookUrl"></code></p>
+        <p><strong>Token de Verificação:</strong><br /><code id="verifyToken"></code></p>
+        <p><strong>IG User ID configurado:</strong><br /><code id="igUserId"></code></p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function showTab(name, btn) {
+      ['rules', 'broadcast', 'config'].forEach(t => document.getElementById('tab-' + t).classList.add('hidden'));
+      document.getElementById('tab-' + name).classList.remove('hidden');
+      document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+
+    async function loadAll() {
+      const status = await fetch('/api/status').then(r => r.json());
+      const badge = document.getElementById('statusBadge');
+      badge.textContent = status.tokenConfigured ? 'Token Meta Conectado ✅' : 'Falta META_ACCESS_TOKEN ⚠️';
+      badge.className = 'badge ' + (status.tokenConfigured ? 'ok' : 'warn');
+
+      document.getElementById('webhookUrl').textContent = window.location.origin + '/webhook';
+      document.getElementById('verifyToken').textContent = status.verifyToken;
+      document.getElementById('igUserId').textContent = status.igUserId;
+
+      const rules = await fetch('/api/rules').then(r => r.json());
+      document.getElementById('rulesList').innerHTML = rules.map(r => `
+        <div class="rule-item">
+          <div>
+            <strong>[${r.type === 'comment' ? 'COMENTÁRIO' : 'DM / STORY'}] Gatilho: "${r.keyword}"</strong><br/>
+            ${r.publicReply ? `<small>Resposta pública: ${r.publicReply}</small><br/>` : ''}
+            <small>DM: ${r.dmText}</small>
+          </div>
+          <button class="danger" onclick="delRule(${r.id})">Excluir</button>
+        </div>
+      `).join('') || '<p style="color:#94a3b8;">Nenhuma regra cadastrada.</p>';
+
+      const contacts = await fetch('/api/contacts').then(r => r.json());
+      document.getElementById('contactsInfo').textContent = `Contatos elegíveis na janela de 24h: ${contacts.length}`;
+    }
+
+    async function addRule() {
+      await fetch('/api/rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: document.getElementById('rType').value,
+          keyword: document.getElementById('rKeyword').value,
+          publicReply: document.getElementById('rPublic').value,
+          dmText: document.getElementById('rDm').value,
+          buttonText: document.getElementById('rBtnText').value,
+          buttonUrl: document.getElementById('rBtnUrl').value
+        })
+      });
+      document.getElementById('rKeyword').value = '';
+      document.getElementById('rPublic').value = '';
+      document.getElementById('rDm').value = '';
+      loadAll();
+    }
+
+    async function delRule(id) {
+      await fetch('/api/rules/' + id, { method: 'DELETE' });
+      loadAll();
+    }
+
+    async function sendBroadcast() {
+      const res = await fetch('/api/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: document.getElementById('bText').value,
+          buttonText: document.getElementById('bBtnText').value,
+          buttonUrl: document.getElementById('bBtnUrl').value
+        })
+      }).then(r => r.json());
+      document.getElementById('bResult').textContent = `Disparo concluído: ${res.sent} de ${res.total} enviados.`;
+    }
+
+    loadAll();
+  </script>
+</body>
+</html>
