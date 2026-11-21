@@ -146,6 +146,46 @@ async function sendFlowStep(recipient, flowId, stepId) {
   await sendDM(recipient, step.message, step.buttons || []);
 }
 
+async function processIncomingMessageEvent(msgEvent) {
+  const senderId = msgEvent.sender?.id;
+  if (!senderId || senderId === IG_USER_ID) return;
+  if (msgEvent.message?.is_echo) return;
+
+  upsertContact(senderId);
+
+  // Clique em botão de fluxo (Quick Reply)
+  const qrPayload = msgEvent.message?.quick_reply?.payload;
+  if (qrPayload && qrPayload.startsWith('FLOW_STEP:')) {
+    const targetStepId = qrPayload.replace('FLOW_STEP:', '');
+    for (const flow of state.flows) {
+      const step = flow.steps.find(s => s.id === targetStepId);
+      if (step) {
+        await sendDM(senderId, step.message, step.buttons || []);
+        break;
+      }
+    }
+    return;
+  }
+
+  const text = (msgEvent.message?.text || '').toUpperCase();
+  const isStoryReply = Boolean(
+    msgEvent.message?.reply_to?.story ||
+    (msgEvent.message?.attachments || []).some(a => a.type === 'story_mention')
+  );
+
+  const targetType = isStoryReply ? 'story' : 'dm';
+  const rule = state.automations.find(
+    a => a.active && a.type === targetType && (!a.keyword || text.includes(a.keyword.toUpperCase()))
+  );
+
+  if (rule) {
+    console.log(`📩 ${isStoryReply ? 'Story' : 'DM'} capturada de ${senderId}: ${msgEvent.message?.text || ''}`);
+    if (isStoryReply) state.stats.storiesReplied++;
+    if (rule.dmText) await sendDM(senderId, rule.dmText);
+    if (rule.flowId) await sendFlowStep(senderId, rule.flowId);
+  }
+}
+
 // --- WEBHOOK META ---
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
@@ -161,12 +201,13 @@ app.get('/webhook', (req, res) => {
 
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
+  console.log('📥 Webhook recebido:', JSON.stringify(req.body));
   if (state.mode !== 'production') return;
 
   try {
     const entries = req.body.entry || [];
     for (const entry of entries) {
-      // 1. Comentários em Posts e Reels
+      // 1. Comentários em Posts/Reels e eventuais mensagens via changes
       for (const change of entry.changes || []) {
         if (change.field === 'comments') {
           const val = change.value || {};
@@ -188,48 +229,14 @@ app.post('/webhook', async (req, res) => {
             if (rule.dmText) await sendDM({ comment_id: commentId }, rule.dmText);
             if (rule.flowId) await sendFlowStep(fromId, rule.flowId);
           }
+        } else if (change.field === 'messages' && change.value) {
+          await processIncomingMessageEvent(change.value);
         }
       }
 
       // 2. DMs, Respostas a Stories e Cliques em Fluxos
       for (const msgEvent of entry.messaging || []) {
-        const senderId = msgEvent.sender?.id;
-        if (!senderId || senderId === IG_USER_ID) continue;
-        if (msgEvent.message?.is_echo) continue;
-
-        upsertContact(senderId);
-
-        // Clique em botão de fluxo (Quick Reply)
-        const qrPayload = msgEvent.message?.quick_reply?.payload;
-        if (qrPayload && qrPayload.startsWith('FLOW_STEP:')) {
-          const targetStepId = qrPayload.replace('FLOW_STEP:', '');
-          for (const flow of state.flows) {
-            const step = flow.steps.find(s => s.id === targetStepId);
-            if (step) {
-              await sendDM(senderId, step.message, step.buttons || []);
-              break;
-            }
-          }
-          continue;
-        }
-
-        const text = (msgEvent.message?.text || '').toUpperCase();
-        const isStoryReply = Boolean(
-          msgEvent.message?.reply_to?.story ||
-          (msgEvent.message?.attachments || []).some(a => a.type === 'story_mention')
-        );
-
-        const targetType = isStoryReply ? 'story' : 'dm';
-        const rule = state.automations.find(
-          a => a.active && a.type === targetType && (!a.keyword || text.includes(a.keyword.toUpperCase()))
-        );
-
-        if (rule) {
-          console.log(`📩 ${isStoryReply ? 'Story' : 'DM'} capturada de ${senderId}`);
-          if (isStoryReply) state.stats.storiesReplied++;
-          if (rule.dmText) await sendDM(senderId, rule.dmText);
-          if (rule.flowId) await sendFlowStep(senderId, rule.flowId);
-        }
+        await processIncomingMessageEvent(msgEvent);
       }
     }
   } catch (err) {
