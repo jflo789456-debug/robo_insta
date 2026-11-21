@@ -3,166 +3,381 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>InstaFlow Studio — Painel Oficial</title>
-  <style>
-    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
-    body { margin: 0; background: #0f172a; color: #f8fafc; padding: 24px; }
-    .container { max-width: 960px; margin: 0 auto; }
-    header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; border-bottom: 1px solid #1e293b; padding-bottom: 16px; }
-    h1 { margin: 0; font-size: 1.5rem; background: linear-gradient(90deg, #f472b6, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .badge { padding: 6px 12px; border-radius: 999px; font-size: 0.85rem; font-weight: 600; background: #1e293b; }
-    .badge.ok { background: #064e3b; color: #6ee7b7; }
-    .badge.warn { background: #78350f; color: #fcd34d; }
-    .tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
-    .tab { background: #1e293b; color: #cbd5e1; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; }
-    .tab.active { background: #9333ea; color: #fff; }
-    .card { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
-    label { display: block; font-size: 0.85rem; color: #94a3b8; margin: 10px 0 4px; }
-    input, select, textarea { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; }
-    button.primary { margin-top: 14px; background: #9333ea; color: #fff; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600; }
-    button.danger { background: #dc2626; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
-    .rule-item { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 12px; background: #0f172a; border-radius: 8px; margin-top: 10px; }
-    .hidden { display: none; }
-    code { background: #0f172a; padding: 4px 8px; border-radius: 6px; color: #38bdf8; word-break: break-all; }
-  </style>
+  <title>InstaFlow Studio — Automação Oficial Instagram</title>
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-  <div class="container">
-    <header>
-      <h1>InstaFlow Studio</h1>
-      <div id="statusBadge" class="badge">Carregando status...</div>
-    </header>
-
-    <div class="tabs">
-      <button class="tab active" onclick="showTab('rules', this)">Automações (Posts, Reels e DMs)</button>
-      <button class="tab" onclick="showTab('broadcast', this)">Disparo em Massa (24h)</button>
-      <button class="tab" onclick="showTab('config', this)">Configuração Meta</button>
-    </div>
-
-    <div id="tab-rules">
-      <div class="card">
-        <h3>Nova Automação</h3>
-        <label>Onde ativar?</label>
-        <select id="rType">
-          <option value="comment">Comentário em Post / Reel</option>
-          <option value="dm">Mensagem no Direct / Resposta de Story</option>
-        </select>
-        <label>Palavra-chave (gatilho)</label>
-        <input id="rKeyword" placeholder="Ex: QUERO, LINK, PRECO" />
-        <label>Resposta pública no comentário (opcional)</label>
-        <input id="rPublic" placeholder="Ex: Te enviei no Direct! 😉" />
-        <label>Mensagem enviada no Direct (DM)</label>
-        <textarea id="rDm" rows="3" placeholder="Olá! Aqui está o link que você pediu..."></textarea>
-        <label>Texto do botão (opcional)</label>
-        <input id="rBtnText" placeholder="Ex: Acessar agora" />
-        <label>Link do botão (opcional)</label>
-        <input id="rBtnUrl" placeholder="https://seusite.com" />
-        <button class="primary" onclick="addRule()">Salvar Automação</button>
+<body class="bg-slate-50 text-slate-800 antialiased">
+  <div class="min-h-screen flex">
+    <!-- Sidebar -->
+    <aside id="sidebar" class="w-64 bg-white border-r border-slate-200 hidden md:flex flex-col p-4 gap-2">
+      <div class="px-3 py-2 mb-2">
+        <div class="text-lg font-bold bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text text-transparent">
+          InstaFlow Studio
+        </div>
+        <p class="text-xs text-slate-400">Automação Oficial Instagram</p>
       </div>
+      <button onclick="showTab('overview')" data-tab="overview" class="nav-btn text-left px-3 py-2.5 rounded-xl font-medium text-sm bg-purple-50 text-purple-700">Visão Geral</button>
+      <button onclick="showTab('automations')" data-tab="automations" class="nav-btn text-left px-3 py-2.5 rounded-xl font-medium text-sm text-slate-600 hover:bg-slate-100">Gatilhos (Posts, Stories & DM)</button>
+      <button onclick="showTab('flows')" data-tab="flows" class="nav-btn text-left px-3 py-2.5 rounded-xl font-medium text-sm text-slate-600 hover:bg-slate-100">Fluxos na DM</button>
+      <button onclick="showTab('broadcast')" data-tab="broadcast" class="nav-btn text-left px-3 py-2.5 rounded-xl font-medium text-sm text-slate-600 hover:bg-slate-100">Disparo em Massa (24h)</button>
+      <button onclick="showTab('simulator')" data-tab="simulator" class="nav-btn text-left px-3 py-2.5 rounded-xl font-medium text-sm text-slate-600 hover:bg-slate-100">Simulador</button>
+    </aside>
 
-      <div class="card">
-        <h3>Automações Ativas</h3>
-        <div id="rulesList">Carregando...</div>
-      </div>
-    </div>
+    <!-- Main -->
+    <div class="flex-1 flex flex-col">
+      <!-- Topbar -->
+      <header class="bg-white border-b border-slate-200 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <button onclick="document.getElementById('sidebar').classList.toggle('hidden')" class="md:hidden p-2 rounded-lg border border-slate-200">☰</button>
+          <div>
+            <h1 id="pageTitle" class="text-lg font-bold text-slate-900">Visão Geral</h1>
+            <p class="text-xs text-slate-500">Acompanhe o desempenho das suas automações no Instagram</p>
+          </div>
+        </div>
 
-    <div id="tab-broadcast" class="hidden">
-      <div class="card">
-        <h3>Disparo em Massa (Contatos ativos nas últimas 24h)</h3>
-        <p id="contactsInfo" style="color:#94a3b8;">Carregando contatos...</p>
-        <label>Mensagem da campanha</label>
-        <textarea id="bText" rows="3" placeholder="Oi! Passando para avisar da condição especial de hoje..."></textarea>
-        <label>Texto do botão (opcional)</label>
-        <input id="bBtnText" placeholder="Ver oferta" />
-        <label>Link do botão (opcional)</label>
-        <input id="bBtnUrl" placeholder="https://seusite.com" />
-        <button class="primary" onclick="sendBroadcast()">Disparar agora</button>
-        <p id="bResult" style="margin-top:10px;color:#6ee7b7;"></p>
-      </div>
-    </div>
+        <div class="flex items-center gap-3">
+          <span id="modeBadge" class="px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+            ● Modo Simulação
+          </span>
+          <div class="bg-slate-100 p-1 rounded-xl flex text-xs font-medium">
+            <button id="btnSim" onclick="setMode('simulation')" class="px-3 py-1.5 rounded-lg bg-white shadow-sm text-slate-900">Modo Simulação</button>
+            <button id="btnProd" onclick="setMode('production')" class="px-3 py-1.5 rounded-lg text-slate-500">Modo Produção</button>
+          </div>
+        </div>
+      </header>
 
-    <div id="tab-config" class="hidden">
-      <div class="card">
-        <h3>Dados para colar na Etapa 3 do Meta for Developers</h3>
-        <p><strong>URL de Callback do Webhook:</strong><br /><code id="webhookUrl"></code></p>
-        <p><strong>Token de Verificação:</strong><br /><code id="verifyToken"></code></p>
-        <p><strong>IG User ID configurado:</strong><br /><code id="igUserId"></code></p>
-      </div>
+      <main class="p-6 max-w-6xl w-full mx-auto space-y-6">
+        <!-- TAB: VISÃO GERAL -->
+        <section id="tab-overview" class="space-y-6">
+          <div class="bg-white border border-slate-200 rounded-2xl p-6 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 class="text-base font-bold text-slate-900">Central de Automação Instagram</h2>
+              <p class="text-sm text-slate-500 mt-1">Gerencie respostas automáticas em Posts, Reels, Stories, fluxos interativos na DM e disparos na janela de 24h.</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <button onclick="showTab('simulator')" class="px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-orange-500 via-pink-600 to-purple-600 shadow-sm hover:opacity-95">
+                ▶ Testar no Simulador
+              </button>
+              <button onclick="showTab('automations')" class="px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50">
+                + Novo Gatilho
+              </button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 flex items-start justify-between">
+              <div>
+                <p class="text-sm text-slate-500">Comentários Resp.</p>
+                <p id="statComments" class="text-3xl font-bold text-slate-900 mt-2">0</p>
+                <p class="text-xs font-medium text-emerald-600 mt-2">Posts & Reels</p>
+              </div>
+              <div class="w-10 h-10 rounded-xl bg-pink-50 text-pink-600 flex items-center justify-center">💬</div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 flex items-start justify-between">
+              <div>
+                <p class="text-sm text-slate-500">Respostas Stories</p>
+                <p id="statStories" class="text-3xl font-bold text-slate-900 mt-2">0</p>
+                <p class="text-xs font-medium text-orange-600 mt-2">Menções & Reações</p>
+              </div>
+              <div class="w-10 h-10 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center">⭕</div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 flex items-start justify-between">
+              <div>
+                <p class="text-sm text-slate-500">DMs Enviadas</p>
+                <p id="statDms" class="text-3xl font-bold text-slate-900 mt-2">0</p>
+                <p class="text-xs font-medium text-purple-600 mt-2">Fluxos + Massa</p>
+              </div>
+              <div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">✈️</div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 flex items-start justify-between">
+              <div>
+                <p class="text-sm text-slate-500">Fluxos Ativos</p>
+                <p id="statFlows" class="text-3xl font-bold text-slate-900 mt-2">0</p>
+                <p id="statTriggersSub" class="text-xs font-medium text-slate-500 mt-2">0 gatilhos ativos</p>
+              </div>
+              <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">🔀</div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded-2xl p-6 flex items-start justify-between">
+              <div>
+                <p class="text-sm text-slate-500">Janela 24h Ativa</p>
+                <p id="statContacts" class="text-3xl font-bold text-slate-900 mt-2">0</p>
+                <p class="text-xs font-medium text-emerald-600 mt-2">Prontos p/ disparo</p>
+              </div>
+              <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">👥</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB: GATILHOS -->
+        <section id="tab-automations" class="hidden space-y-6">
+          <div class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
+            <h2 class="font-bold text-slate-900">Criar Novo Gatilho</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="text-xs font-medium text-slate-500">Onde ativar?</label>
+                <select id="autoType" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                  <option value="comment">Comentário em Post / Reel</option>
+                  <option value="story">Resposta ou Menção no Story</option>
+                  <option value="dm">Mensagem Recebida na DM</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs font-medium text-slate-500">Palavra-chave (vazio = qualquer texto)</label>
+                <input id="autoKeyword" placeholder="Ex: QUERO, LINK, PRECO" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label class="text-xs font-medium text-slate-500">Resposta pública (apenas p/ Comentário)</label>
+                <input id="autoPublicReply" placeholder="Ex: Te enviei no Direct! 😊" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label class="text-xs font-medium text-slate-500">Conectar a um Fluxo na DM (opcional)</label>
+                <select id="autoFlowId" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                  <option value="">Nenhum fluxo</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-slate-500">Mensagem enviada na DM</label>
+              <textarea id="autoDmText" rows="2" placeholder="Olá! Aqui está o que você pediu..." class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"></textarea>
+            </div>
+            <button onclick="saveAutomation()" class="px-5 py-2.5 rounded-xl bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700">Salvar Gatilho</button>
+          </div>
+
+          <div id="automationsList" class="space-y-3"></div>
+        </section>
+
+        <!-- TAB: FLUXOS NA DM -->
+        <section id="tab-flows" class="hidden space-y-6">
+          <div class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
+            <h2 class="font-bold text-slate-900">Novo Fluxo Interativo na DM</h2>
+            <input id="flowName" placeholder="Nome do fluxo (Ex: Funil Mentoria)" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            <textarea id="flowStep1Msg" rows="2" placeholder="Mensagem inicial do fluxo (Ex: Qual seu objetivo hoje?)" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"></textarea>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <input id="flowBtn1" placeholder="Texto do Botão 1 (Ex: Quero comprar)" class="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm bg-white" />
+                <textarea id="flowResp1" rows="2" placeholder="Resposta ao clicar no Botão 1..." class="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm bg-white"></textarea>
+              </div>
+              <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <input id="flowBtn2" placeholder="Texto do Botão 2 (Ex: Tirar dúvida)" class="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm bg-white" />
+                <textarea id="flowResp2" rows="2" placeholder="Resposta ao clicar no Botão 2..." class="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm bg-white"></textarea>
+              </div>
+            </div>
+            <button onclick="saveFlow()" class="px-5 py-2.5 rounded-xl bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700">Salvar Fluxo</button>
+          </div>
+          <div id="flowsList" class="space-y-3"></div>
+        </section>
+
+        <!-- TAB: DISPARO EM MASSA -->
+        <section id="tab-broadcast" class="hidden space-y-6">
+          <div class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
+            <h2 class="font-bold text-slate-900">Disparo em Massa na DM (Janela 24h)</h2>
+            <p class="text-sm text-slate-500">Envia uma mensagem direta para todos os contatos que interagiram com sua conta nas últimas 24 horas (regra oficial da Meta).</p>
+            <textarea id="broadcastMsg" rows="3" placeholder="Digite a mensagem para enviar em massa..." class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"></textarea>
+            <button onclick="sendBroadcast()" class="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700">Enviar Disparo Agora</button>
+            <p id="broadcastStatus" class="text-sm text-emerald-700 font-medium"></p>
+          </div>
+        </section>
+
+        <!-- TAB: SIMULADOR -->
+        <section id="tab-simulator" class="hidden space-y-6">
+          <div class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
+            <h2 class="font-bold text-slate-900">Simulador de Interação</h2>
+            <div class="flex flex-wrap gap-3">
+              <select id="simType" class="rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                <option value="comment">Comentário em Post/Reel</option>
+                <option value="story">Resposta ao Story</option>
+                <option value="dm">Mensagem na DM</option>
+              </select>
+              <input id="simText" placeholder="Digite o texto do seguidor (Ex: QUERO)" class="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+              <button onclick="runSimulation()" class="px-5 py-2 rounded-xl bg-purple-600 text-white text-sm font-semibold">Simular</button>
+            </div>
+            <div id="simChat" class="bg-slate-50 border border-slate-200 rounded-xl p-4 min-h-[220px] space-y-3 text-sm"></div>
+          </div>
+        </section>
+      </main>
     </div>
   </div>
 
   <script>
-    function showTab(name, btn) {
-      ['rules', 'broadcast', 'config'].forEach(t => document.getElementById('tab-' + t).classList.add('hidden'));
-      document.getElementById('tab-' + name).classList.remove('hidden');
-      document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
+    let appState = null;
+
+    async function loadState() {
+      const res = await fetch('/api/state');
+      appState = await res.json();
+      render();
     }
 
-    async function loadAll() {
-      const status = await fetch('/api/status').then(r => r.json());
-      const badge = document.getElementById('statusBadge');
-      badge.textContent = status.tokenConfigured ? 'Token Meta Conectado ✅' : 'Falta META_ACCESS_TOKEN ⚠️';
-      badge.className = 'badge ' + (status.tokenConfigured ? 'ok' : 'warn');
+    function render() {
+      if (!appState) return;
+      document.getElementById('statComments').textContent = appState.stats.commentsReplied;
+      document.getElementById('statStories').textContent = appState.stats.storiesReplied;
+      document.getElementById('statDms').textContent = appState.stats.dmsSent;
+      document.getElementById('statFlows').textContent = appState.stats.activeFlows;
+      document.getElementById('statTriggersSub').textContent = `${appState.stats.activeAutomations} gatilhos ativos`;
+      document.getElementById('statContacts').textContent = appState.stats.active24hContacts;
 
-      document.getElementById('webhookUrl').textContent = window.location.origin + '/webhook';
-      document.getElementById('verifyToken').textContent = status.verifyToken;
-      document.getElementById('igUserId').textContent = status.igUserId;
+      const isProd = appState.mode === 'production';
+      const badge = document.getElementById('modeBadge');
+      badge.textContent = isProd ? '● Modo Produção' : '● Modo Simulação';
+      badge.className = isProd
+        ? 'px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200'
+        : 'px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200';
 
-      const rules = await fetch('/api/rules').then(r => r.json());
-      document.getElementById('rulesList').innerHTML = rules.map(r => `
-        <div class="rule-item">
+      document.getElementById('btnSim').className = !isProd ? 'px-3 py-1.5 rounded-lg bg-white shadow-sm text-slate-900' : 'px-3 py-1.5 rounded-lg text-slate-500';
+      document.getElementById('btnProd').className = isProd ? 'px-3 py-1.5 rounded-lg bg-white shadow-sm text-slate-900' : 'px-3 py-1.5 rounded-lg text-slate-500';
+
+      const flowSelect = document.getElementById('autoFlowId');
+      flowSelect.innerHTML = '<option value="">Nenhum fluxo</option>' +
+        appState.flows.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
+
+      document.getElementById('automationsList').innerHTML = appState.automations.map(a => `
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between">
           <div>
-            <strong>[${r.type === 'comment' ? 'COMENTÁRIO' : 'DM / STORY'}] Gatilho: "${r.keyword}"</strong><br/>
-            ${r.publicReply ? `<small>Resposta pública: ${r.publicReply}</small><br/>` : ''}
-            <small>DM: ${r.dmText}</small>
+            <span class="text-xs font-semibold uppercase px-2 py-0.5 rounded bg-purple-50 text-purple-700">${a.type}</span>
+            <span class="font-bold text-sm ml-2">${a.keyword || '(Qualquer texto)'}</span>
+            <p class="text-xs text-slate-500 mt-1">${a.dmText || ''}</p>
           </div>
-          <button class="danger" onclick="delRule(${r.id})">Excluir</button>
+          <button onclick="deleteAutomation('${a.id}')" class="text-xs text-red-500 hover:underline">Excluir</button>
         </div>
-      `).join('') || '<p style="color:#94a3b8;">Nenhuma regra cadastrada.</p>';
+      `).join('');
 
-      const contacts = await fetch('/api/contacts').then(r => r.json());
-      document.getElementById('contactsInfo').textContent = `Contatos elegíveis na janela de 24h: ${contacts.length}`;
+      document.getElementById('flowsList').innerHTML = appState.flows.map(f => `
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between">
+          <div>
+            <p class="font-bold text-sm">${f.name}</p>
+            <p class="text-xs text-slate-500">${f.steps.length} etapas configuradas</p>
+          </div>
+          <button onclick="deleteFlow('${f.id}')" class="text-xs text-red-500 hover:underline">Excluir</button>
+        </div>
+      `).join('');
     }
 
-    async function addRule() {
-      await fetch('/api/rules', {
+    function showTab(tab) {
+      ['overview', 'automations', 'flows', 'broadcast', 'simulator'].forEach(t => {
+        document.getElementById('tab-' + t).classList.toggle('hidden', t !== tab);
+      });
+      document.querySelectorAll('.nav-btn').forEach(b => {
+        const active = b.dataset.tab === tab;
+        b.className = active
+          ? 'nav-btn text-left px-3 py-2.5 rounded-xl font-medium text-sm bg-purple-50 text-purple-700'
+          : 'nav-btn text-left px-3 py-2.5 rounded-xl font-medium text-sm text-slate-600 hover:bg-slate-100';
+      });
+    }
+
+    async function setMode(mode) {
+      await fetch('/api/mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+      loadState();
+    }
+
+    async function saveAutomation() {
+      await fetch('/api/automations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: document.getElementById('rType').value,
-          keyword: document.getElementById('rKeyword').value,
-          publicReply: document.getElementById('rPublic').value,
-          dmText: document.getElementById('rDm').value,
-          buttonText: document.getElementById('rBtnText').value,
-          buttonUrl: document.getElementById('rBtnUrl').value
+          type: document.getElementById('autoType').value,
+          keyword: document.getElementById('autoKeyword').value.trim(),
+          publicReply: document.getElementById('autoPublicReply').value.trim(),
+          dmText: document.getElementById('autoDmText').value.trim(),
+          flowId: document.getElementById('autoFlowId').value
         })
       });
-      document.getElementById('rKeyword').value = '';
-      document.getElementById('rPublic').value = '';
-      document.getElementById('rDm').value = '';
-      loadAll();
+      document.getElementById('autoKeyword').value = '';
+      document.getElementById('autoPublicReply').value = '';
+      document.getElementById('autoDmText').value = '';
+      loadState();
     }
 
-    async function delRule(id) {
-      await fetch('/api/rules/' + id, { method: 'DELETE' });
-      loadAll();
+    async function deleteAutomation(id) {
+      await fetch('/api/automations/' + id, { method: 'DELETE' });
+      loadState();
+    }
+
+    async function saveFlow() {
+      const steps = [{
+        id: 'step_1',
+        message: document.getElementById('flowStep1Msg').value.trim(),
+        buttons: []
+      }];
+      const b1 = document.getElementById('flowBtn1').value.trim();
+      const r1 = document.getElementById('flowResp1').value.trim();
+      if (b1) {
+        steps[0].buttons.push({ title: b1, nextStepId: 'step_2' });
+        steps.push({ id: 'step_2', message: r1, buttons: [] });
+      }
+      const b2 = document.getElementById('flowBtn2').value.trim();
+      const r2 = document.getElementById('flowResp2').value.trim();
+      if (b2) {
+        steps[0].buttons.push({ title: b2, nextStepId: 'step_3' });
+        steps.push({ id: 'step_3', message: r2, buttons: [] });
+      }
+      await fetch('/api/flows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: document.getElementById('flowName').value.trim() || 'Novo Fluxo', steps })
+      });
+      loadState();
+    }
+
+    async function deleteFlow(id) {
+      await fetch('/api/flows/' + id, { method: 'DELETE' });
+      loadState();
     }
 
     async function sendBroadcast() {
+      const message = document.getElementById('broadcastMsg').value.trim();
+      if (!message) return;
       const res = await fetch('/api/broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: document.getElementById('bText').value,
-          buttonText: document.getElementById('bBtnText').value,
-          buttonUrl: document.getElementById('bBtnUrl').value
-        })
-      }).then(r => r.json());
-      document.getElementById('bResult').textContent = `Disparo concluído: ${res.sent} de ${res.total} enviados.`;
+        body: JSON.stringify({ message })
+      });
+      const data = await res.json();
+      document.getElementById('broadcastStatus').textContent = `Disparo processado para ${data.sent} contato(s) (${data.mode}).`;
+      loadState();
     }
 
-    loadAll();
+    function runSimulation() {
+      const type = document.getElementById('simType').value;
+      const text = document.getElementById('simText').value.trim();
+      const chat = document.getElementById('simChat');
+      chat.innerHTML = `<div class="text-right"><span class="inline-block bg-purple-600 text-white px-3 py-2 rounded-xl">${text}</span></div>`;
+
+      const rule = appState.automations.find(a => a.active && a.type === type && (!a.keyword || text.toUpperCase().includes(a.keyword.toUpperCase())));
+      if (!rule) {
+        chat.innerHTML += `<div class="text-slate-400">Nenhum gatilho encontrado para "${text}".</div>`;
+        return;
+      }
+      if (rule.publicReply) {
+        chat.innerHTML += `<div><span class="inline-block bg-pink-50 text-pink-800 px-3 py-2 rounded-xl"><strong>Comentário público:</strong> ${rule.publicReply}</span></div>`;
+      }
+      if (rule.dmText) {
+        chat.innerHTML += `<div><span class="inline-block bg-white border border-slate-200 px-3 py-2 rounded-xl">${rule.dmText}</span></div>`;
+      }
+      if (rule.flowId) {
+        const flow = appState.flows.find(f => f.id === rule.flowId);
+        if (flow && flow.steps[0]) renderSimStep(flow, flow.steps[0]);
+      }
+    }
+
+    function renderSimStep(flow, step) {
+      const chat = document.getElementById('simChat');
+      const btns = (step.buttons || []).map(b =>
+        `<button onclick="clickSimBtn('${flow.id}','${b.nextStepId}')" class="px-3 py-1 rounded-lg bg-purple-50 text-purple-700 border border-purple-200 text-xs font-medium">${b.title}</button>`
+      ).join(' ');
+      chat.innerHTML += `<div class="space-y-2"><div class="inline-block bg-white border border-slate-200 px-3 py-2 rounded-xl">${step.message}</div><div class="flex gap-2">${btns}</div></div>`;
+    }
+
+    function clickSimBtn(flowId, stepId) {
+      const flow = appState.flows.find(f => f.id === flowId);
+      const step = flow?.steps.find(s => s.id === stepId);
+      if (step) renderSimStep(flow, step);
+    }
+
+    loadState();
   </script>
 </body>
 </html>
