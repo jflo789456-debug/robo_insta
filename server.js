@@ -1,230 +1,293 @@
 const express = require('express');
-const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || '';
-const WEBHOOK_VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN || 'mvt_webhook_2026';
-const IG_USER_ID = process.env.IG_USER_ID || '17841440156916340';
-const DATA_FILE = path.join(__dirname, 'data.json');
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'mvt_webhook_2026';
+const IG_USER_ID = process.env.IG_USER_ID || '';
 
-// Carrega ou inicializa dados locais (regras e contatos 24h)
-let db = {
-  rules: [
+// --- BANCO DE DADOS EM MEMÓRIA ---
+const state = {
+  mode: META_ACCESS_TOKEN ? 'production' : 'simulation',
+  stats: {
+    commentsReplied: 0,
+    storiesReplied: 0,
+    dmsSent: 0
+  },
+  automations: [
     {
-      id: 1,
-      type: 'comment',
+      id: 'auto_1',
+      type: 'comment', // comment | story | dm
       keyword: 'QUERO',
-      publicReply: 'Te enviei as informações no Direct! Dá uma olhada lá 😉',
-      dmText: 'Olá! Aqui está o link que você pediu no comentário:',
-      buttonText: 'Acessar agora',
-      buttonUrl: 'https://instagram.com',
+      publicReply: 'Te enviei as informações no Direct! 😊',
+      dmText: 'Olá! Vi seu comentário. Clique abaixo para escolher o que você precisa:',
+      flowId: 'flow_1',
       active: true
     },
     {
-      id: 2,
+      id: 'auto_2',
+      type: 'story',
+      keyword: 'EU QUERO',
+      publicReply: '',
+      dmText: 'Obrigada por responder meu Story! Segue o acesso:',
+      flowId: '',
+      active: true
+    },
+    {
+      id: 'auto_3',
       type: 'dm',
       keyword: 'PRECO',
       publicReply: '',
-      dmText: 'Oi! Nossos planos e valores estão disponíveis no link abaixo:',
-      buttonText: 'Ver tabela',
-      buttonUrl: 'https://instagram.com',
+      dmText: 'Nossos planos começam a partir de R$ 97. Quer ver os detalhes?',
+      flowId: 'flow_1',
       active: true
     }
   ],
-  contacts: []
+  flows: [
+    {
+      id: 'flow_1',
+      name: 'Fluxo de Boas-Vindas e Oferta',
+      steps: [
+        {
+          id: 'step_1',
+          message: 'Como posso te ajudar hoje? Escolha uma opção:',
+          buttons: [
+            { title: 'Ver Oferta', nextStepId: 'step_2' },
+            { title: 'Falar com Suporte', nextStepId: 'step_3' }
+          ]
+        },
+        {
+          id: 'step_2',
+          message: 'Perfeito! Acesse a oferta completa aqui: https://mentoriamvt.com/',
+          buttons: []
+        },
+        {
+          id: 'step_3',
+          message: 'Certo! Já avisei nossa equipe e logo responderemos por aqui.',
+          buttons: []
+        }
+      ]
+    }
+  ],
+  contacts: [] // { id, username, lastInteraction }
 };
 
-if (fs.existsSync(DATA_FILE)) {
-  try {
-    db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-  } catch (e) {
-    console.error('Erro ao ler data.json:', e.message);
-  }
-}
-
-function saveDb() {
-  try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
-  } catch (e) {
-    console.error('Erro ao salvar data.json:', e.message);
-  }
-}
-
-function upsertContact(igScopedId, username = 'Usuário Instagram') {
-  const now = new Date().toISOString();
-  const idx = db.contacts.findIndex(c => c.id === igScopedId);
+// Registra contato na janela de 24h
+function upsertContact(id, username = 'Seguidor') {
+  if (!id) return;
+  const now = Date.now();
+  const idx = state.contacts.findIndex(c => c.id === id);
   if (idx >= 0) {
-    db.contacts[idx].lastInteraction = now;
-    if (username && username !== 'Usuário Instagram') db.contacts[idx].username = username;
+    state.contacts[idx].lastInteraction = now;
+    if (username && username !== 'Seguidor') state.contacts[idx].username = username;
   } else {
-    db.contacts.unshift({ id: igScopedId, username, lastInteraction: now });
+    state.contacts.unshift({ id, username, lastInteraction: now });
   }
-  saveDb();
 }
 
+function getActive24hContacts() {
+  const limit = Date.now() - 24 * 60 * 60 * 1000;
+  return state.contacts.filter(c => c.lastInteraction >= limit);
+}
+
+// --- FUNÇÕES DA API OFICIAL DA META ---
 async function metaPost(endpoint, body) {
-  if (!META_ACCESS_TOKEN) {
-    console.warn('⚠️ META_ACCESS_TOKEN não configurado nas variáveis de ambiente.');
-    return { error: 'META_ACCESS_TOKEN não configurado' };
-  }
-  const url = `https://graph.facebook.com/v21.0/${endpoint}?access_token=${encodeURIComponent(META_ACCESS_TOKEN)}`;
+  if (!META_ACCESS_TOKEN) return { skipped: true, reason: 'Sem META_ACCESS_TOKEN' };
+  const url = `https://graph.instagram.com/v21.0/${endpoint}?access_token=${META_ACCESS_TOKEN}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
   const data = await res.json();
-  if (!res.ok) console.error('Erro Meta API:', data);
+  if (!res.ok) console.error('Erro Meta API:', JSON.stringify(data));
   return data;
 }
 
-async function sendDm(recipientId, text, buttonText, buttonUrl) {
-  const message = (buttonText && buttonUrl)
-    ? {
-        attachment: {
-          type: 'template',
-          payload: {
-            template_type: 'button',
-            text,
-            buttons: [{ type: 'web_url', url: buttonUrl, title: buttonText }]
-          }
-        }
-      }
-    : { text };
-
-  return metaPost(`${IG_USER_ID}/messages`, {
-    recipient: { id: recipientId },
-    message
-  });
+async function replyComment(commentId, message) {
+  if (!message) return;
+  await metaPost(`${commentId}/replies`, { message });
+  state.stats.commentsReplied++;
 }
 
-// ==========================================
-// 1. WEBHOOK DA META (GET = Verificação, POST = Eventos)
-// ==========================================
+async function sendDM(recipientId, text, buttons = []) {
+  const payload = {
+    recipient: { id: recipientId },
+    message: { text }
+  };
+
+  if (buttons && buttons.length > 0) {
+    payload.message.quick_replies = buttons.slice(0, 3).map(btn => ({
+      content_type: 'text',
+      title: btn.title.slice(0, 20),
+      payload: `FLOW_STEP:${btn.nextStepId}`
+    }));
+  }
+
+  await metaPost('me/messages', payload);
+  state.stats.dmsSent++;
+}
+
+async function sendFlowStep(recipientId, flowId, stepId) {
+  const flow = state.flows.find(f => f.id === flowId);
+  if (!flow) return;
+  const step = stepId ? flow.steps.find(s => s.id === stepId) : flow.steps[0];
+  if (!step) return;
+  await sendDM(recipientId, step.message, step.buttons || []);
+}
+
+// --- WEBHOOK META ---
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode === 'subscribe' && token === WEBHOOK_VERIFY_TOKEN) {
-    console.log('✅ Webhook verificado pela Meta!');
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    console.log('✅ Webhook verificado pela Meta');
     return res.status(200).send(challenge);
   }
   return res.sendStatus(403);
 });
 
 app.post('/webhook', async (req, res) => {
-  const body = req.body;
-  if (body.object !== 'instagram') return res.sendStatus(404);
+  res.sendStatus(200);
+  if (state.mode !== 'production') return;
 
-  res.status(200).send('EVENT_RECEIVED');
+  try {
+    const entries = req.body.entry || [];
+    for (const entry of entries) {
+      // 1. Comentários em Posts e Reels
+      for (const change of entry.changes || []) {
+        if (change.field === 'comments') {
+          const val = change.value || {};
+          const fromId = val.from?.id;
+          const username = val.from?.username || 'Seguidor';
+          const text = (val.text || '').toUpperCase();
+          const commentId = val.id;
 
-  for (const entry of body.entry || []) {
-    // Eventos de Comentários (Posts / Reels)
-    for (const change of entry.changes || []) {
-      if (change.field === 'comments' && change.value) {
-        const { id: commentId, text = '', from = {} } = change.value;
-        if (!from.id || from.id === IG_USER_ID) continue;
+          if (!fromId || fromId === IG_USER_ID) continue;
+          upsertContact(fromId, username);
 
-        const lowerText = text.toLowerCase();
-        const rule = db.rules.find(
-          r => r.active && r.type === 'comment' && lowerText.includes(r.keyword.toLowerCase())
-        );
+          const rule = state.automations.find(
+            a => a.active && a.type === 'comment' && text.includes(a.keyword.toUpperCase())
+          );
 
-        if (rule) {
-          console.log(`💬 Comentário capturado de @${from.username}: "${text}"`);
-          if (rule.publicReply) {
-            await metaPost(`${commentId}/replies`, { message: rule.publicReply });
-          }
-          if (rule.dmText) {
-            await metaPost(`${IG_USER_ID}/messages`, {
-              recipient: { comment_id: commentId },
-              message: { text: rule.dmText + (rule.buttonUrl ? `\n${rule.buttonUrl}` : '') }
-            });
+          if (rule) {
+            console.log(`💬 Comentário capturado de @${username}: ${val.text}`);
+            if (rule.publicReply) await replyComment(commentId, rule.publicReply);
+            if (rule.dmText) await sendDM(fromId, rule.dmText);
+            if (rule.flowId) await sendFlowStep(fromId, rule.flowId);
           }
         }
       }
-    }
 
-    // Eventos de Mensagens Diretas (DM / Resposta de Story)
-    for (const event of entry.messaging || []) {
-      const senderId = event.sender && event.sender.id;
-      if (!senderId || senderId === IG_USER_ID) continue;
-      if (event.message && event.message.is_echo) continue;
+      // 2. DMs, Respostas a Stories e Cliques em Fluxos
+      for (const msgEvent of entry.messaging || []) {
+        const senderId = msgEvent.sender?.id;
+        if (!senderId || senderId === IG_USER_ID) continue;
+        if (msgEvent.message?.is_echo) continue;
 
-      upsertContact(senderId);
+        upsertContact(senderId);
 
-      const text = (event.message && event.message.text) || '';
-      if (!text) continue;
+        // Clique em botão de fluxo (Quick Reply)
+        const qrPayload = msgEvent.message?.quick_reply?.payload;
+        if (qrPayload && qrPayload.startsWith('FLOW_STEP:')) {
+          const targetStepId = qrPayload.replace('FLOW_STEP:', '');
+          for (const flow of state.flows) {
+            const step = flow.steps.find(s => s.id === targetStepId);
+            if (step) {
+              await sendDM(senderId, step.message, step.buttons || []);
+              break;
+            }
+          }
+          continue;
+        }
 
-      const lowerText = text.toLowerCase();
-      const rule = db.rules.find(
-        r => r.active && r.type === 'dm' && lowerText.includes(r.keyword.toLowerCase())
-      );
+        const text = (msgEvent.message?.text || '').toUpperCase();
+        const isStoryReply = Boolean(
+          msgEvent.message?.reply_to?.story ||
+          (msgEvent.message?.attachments || []).some(a => a.type === 'story_mention')
+        );
 
-      if (rule) {
-        console.log(`📩 DM capturada de ${senderId}: "${text}"`);
-        await sendDm(senderId, rule.dmText, rule.buttonText, rule.buttonUrl);
+        const targetType = isStoryReply ? 'story' : 'dm';
+        const rule = state.automations.find(
+          a => a.active && a.type === targetType && (!a.keyword || text.includes(a.keyword.toUpperCase()))
+        );
+
+        if (rule) {
+          console.log(`📩 ${isStoryReply ? 'Story' : 'DM'} capturada de ${senderId}`);
+          if (isStoryReply) state.stats.storiesReplied++;
+          if (rule.dmText) await sendDM(senderId, rule.dmText);
+          if (rule.flowId) await sendFlowStep(senderId, rule.flowId);
+        }
       }
     }
+  } catch (err) {
+    console.error('Erro ao processar webhook:', err);
   }
 });
 
-// ==========================================
-// 2. API INTERNA DO PAINEL WEB
-// ==========================================
-app.get('/api/status', (req, res) => {
+// --- API DO PAINEL ---
+app.get('/api/state', (req, res) => {
   res.json({
-    online: true,
-    tokenConfigured: Boolean(META_ACCESS_TOKEN),
-    verifyToken: WEBHOOK_VERIFY_TOKEN,
-    igUserId: IG_USER_ID,
-    rulesCount: db.rules.length,
-    contactsCount: db.contacts.length
+    tokenConnected: Boolean(META_ACCESS_TOKEN),
+    mode: state.mode,
+    stats: {
+      ...state.stats,
+      activeFlows: state.flows.length,
+      activeAutomations: state.automations.filter(a => a.active).length,
+      active24hContacts: getActive24hContacts().length
+    },
+    automations: state.automations,
+    flows: state.flows,
+    contacts: getActive24hContacts()
   });
 });
 
-app.get('/api/rules', (req, res) => res.json(db.rules));
-
-app.post('/api/rules', (req, res) => {
-  const newRule = { id: Date.now(), active: true, ...req.body };
-  db.rules.unshift(newRule);
-  saveDb();
-  res.json(newRule);
+app.post('/api/mode', (req, res) => {
+  const { mode } = req.body;
+  if (mode === 'simulation' || mode === 'production') state.mode = mode;
+  res.json({ mode: state.mode });
 });
 
-app.delete('/api/rules/:id', (req, res) => {
-  db.rules = db.rules.filter(r => String(r.id) !== String(req.params.id));
-  saveDb();
+app.post('/api/automations', (req, res) => {
+  const item = { id: 'auto_' + Date.now(), active: true, ...req.body };
+  state.automations.unshift(item);
+  res.json(item);
+});
+
+app.delete('/api/automations/:id', (req, res) => {
+  state.automations = state.automations.filter(a => a.id !== req.params.id);
   res.json({ ok: true });
 });
 
-app.get('/api/contacts', (req, res) => {
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const active24h = db.contacts.filter(c => new Date(c.lastInteraction).getTime() >= cutoff);
-  res.json(active24h);
+app.post('/api/flows', (req, res) => {
+  const flow = { id: 'flow_' + Date.now(), ...req.body };
+  state.flows.unshift(flow);
+  res.json(flow);
+});
+
+app.delete('/api/flows/:id', (req, res) => {
+  state.flows = state.flows.filter(f => f.id !== req.params.id);
+  res.json({ ok: true });
 });
 
 app.post('/api/broadcast', async (req, res) => {
-  const { text, buttonText, buttonUrl } = req.body;
-  if (!text) return res.status(400).json({ error: 'Texto obrigatório' });
-
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const targets = db.contacts.filter(c => new Date(c.lastInteraction).getTime() >= cutoff);
-  let sent = 0;
-
-  for (const c of targets) {
-    const result = await sendDm(c.id, text, buttonText, buttonUrl);
-    if (!result.error) sent++;
+  const { message } = req.body;
+  const targets = getActive24hContacts();
+  if (state.mode === 'production') {
+    for (const contact of targets) {
+      await sendDM(contact.id, message);
+    }
+  } else {
+    state.stats.dmsSent += targets.length;
   }
-  res.json({ total: targets.length, sent });
+  res.json({ sent: targets.length, mode: state.mode });
 });
 
 app.listen(PORT, () => {
