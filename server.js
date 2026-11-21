@@ -133,7 +133,8 @@ async function sendDM(recipient, text, buttons = []) {
     }));
   }
 
-  await metaPost('me/messages', payload);
+  const senderEndpoint = IG_USER_ID ? `${IG_USER_ID}/messages` : 'me/messages';
+  await metaPost(senderEndpoint, payload);
   state.stats.dmsSent++;
 }
 
