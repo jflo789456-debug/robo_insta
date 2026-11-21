@@ -1,15 +1,14 @@
 const express = require('express');
 const path = require('path');
-const fs = require('fs');
 
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
-const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || '';
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'mvt_webhook_2026';
-const IG_USER_ID = process.env.IG_USER_ID || '';
+const META_ACCESS_TOKEN = (process.env.META_ACCESS_TOKEN || '').trim();
+const VERIFY_TOKEN = (process.env.VERIFY_TOKEN || 'mvt_webhook_2026').trim();
+const IG_USER_ID = (process.env.IG_USER_ID || '').trim();
 
 // --- BANCO DE DADOS EM MEMÓRIA ---
 const state = {
@@ -98,7 +97,11 @@ function getActive24hContacts() {
 // --- FUNÇÕES DA API OFICIAL DA META ---
 async function metaPost(endpoint, body) {
   if (!META_ACCESS_TOKEN) return { skipped: true, reason: 'Sem META_ACCESS_TOKEN' };
-  const url = `https://graph.instagram.com/v21.0/${endpoint}?access_token=${META_ACCESS_TOKEN}`;
+  const apiBase = META_ACCESS_TOKEN.startsWith('IG')
+    ? 'https://graph.instagram.com/v21.0'
+    : 'https://graph.facebook.com/v21.0';
+  const url = `${apiBase}/${endpoint}?access_token=${encodeURIComponent(META_ACCESS_TOKEN)}`;
+
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -115,9 +118,10 @@ async function replyComment(commentId, message) {
   state.stats.commentsReplied++;
 }
 
-async function sendDM(recipientId, text, buttons = []) {
+async function sendDM(recipient, text, buttons = []) {
+  const recipientObj = typeof recipient === 'string' ? { id: recipient } : recipient;
   const payload = {
-    recipient: { id: recipientId },
+    recipient: recipientObj,
     message: { text }
   };
 
@@ -133,12 +137,12 @@ async function sendDM(recipientId, text, buttons = []) {
   state.stats.dmsSent++;
 }
 
-async function sendFlowStep(recipientId, flowId, stepId) {
+async function sendFlowStep(recipient, flowId, stepId) {
   const flow = state.flows.find(f => f.id === flowId);
   if (!flow) return;
   const step = stepId ? flow.steps.find(s => s.id === stepId) : flow.steps[0];
   if (!step) return;
-  await sendDM(recipientId, step.message, step.buttons || []);
+  await sendDM(recipient, step.message, step.buttons || []);
 }
 
 // --- WEBHOOK META ---
@@ -180,7 +184,7 @@ app.post('/webhook', async (req, res) => {
           if (rule) {
             console.log(`💬 Comentário capturado de @${username}: ${val.text}`);
             if (rule.publicReply) await replyComment(commentId, rule.publicReply);
-            if (rule.dmText) await sendDM(fromId, rule.dmText);
+            if (rule.dmText) await sendDM({ comment_id: commentId }, rule.dmText);
             if (rule.flowId) await sendFlowStep(fromId, rule.flowId);
           }
         }
