@@ -29,6 +29,7 @@ const DEFAULT_STATE = {
       publicReply: 'Te enviei as informações no Direct! 😊',
       dmText: 'Olá! Vi seu comentário. Clique abaixo para escolher o que você precisa:',
       flowId: 'flow_1',
+      buttons: [],
       active: true
     },
     {
@@ -38,6 +39,7 @@ const DEFAULT_STATE = {
       publicReply: '',
       dmText: 'Obrigada por responder meu Story! Segue o acesso:',
       flowId: '',
+      buttons: [],
       active: true
     },
     {
@@ -47,6 +49,7 @@ const DEFAULT_STATE = {
       publicReply: '',
       dmText: 'Nossos planos começam a partir de R$ 97. Quer ver os detalhes?',
       flowId: 'flow_1',
+      buttons: [],
       active: true
     }
   ],
@@ -93,7 +96,9 @@ function loadInitialState() {
           storiesReplied: Number(parsed.stats?.storiesReplied || 0),
           dmsSent: Number(parsed.stats?.dmsSent || 0)
         },
-        automations: Array.isArray(parsed.automations) ? parsed.automations : [],
+        automations: Array.isArray(parsed.automations)
+          ? parsed.automations.map(a => ({ ...a, buttons: Array.isArray(a.buttons) ? a.buttons : [] }))
+          : [],
         flows: Array.isArray(parsed.flows) ? parsed.flows : DEFAULT_STATE.flows,
         contacts: Array.isArray(parsed.contacts) ? parsed.contacts : []
       };
@@ -136,14 +141,43 @@ function getValidAutomationsByType(type) {
     if (!a || a.active !== true || a.type !== type) return false;
     const hasFlow = Boolean(a.flowId && (state.flows || []).some(f => f.id === a.flowId));
     const hasText = Boolean(String(a.dmText || '').trim() || String(a.publicReply || '').trim());
-    return hasFlow || hasText;
+    const hasButtons = Array.isArray(a.buttons) && a.buttons.length > 0;
+    return hasFlow || hasText || hasButtons;
   });
 }
 
+// Suporta múltiplas palavras-chave separadas por vírgula; vazio = qualquer texto
 function matchesKeyword(rule, upperText) {
-  const kw = String(rule?.keyword || '').trim().toUpperCase();
-  if (!kw) return true; // palavra-chave vazia = qualquer texto
-  return upperText.includes(kw);
+  const rawKw = String(rule?.keyword || '').trim().toUpperCase();
+  if (!rawKw) return true;
+  const keywords = rawKw
+    .split(',')
+    .map(k => k.trim())
+    .filter(Boolean);
+  if (keywords.length === 0) return true;
+  return keywords.some(kw => upperText.includes(kw));
+}
+
+// Normaliza botões vindos do frontend (até 3)
+function normalizeButtons(rawButtons) {
+  if (!Array.isArray(rawButtons)) return [];
+  return rawButtons
+    .slice(0, 3)
+    .map((btn, idx) => {
+      const title = String(btn?.title || btn?.label || btn?.text || '').trim().slice(0, 20);
+      const url = String(btn?.url || btn?.link || '').trim();
+      const replyText = String(btn?.replyText || btn?.reply_text || btn?.response || '').trim();
+      const nextStepId = String(btn?.nextStepId || btn?.next_step_id || '').trim();
+      if (!title) return null;
+      return {
+        id: btn?.id || `btn_${Date.now()}_${idx}`,
+        title,
+        url,
+        replyText,
+        nextStepId
+      };
+    })
+    .filter(Boolean);
 }
 
 // Registra contato na janela de 24h
@@ -195,23 +229,57 @@ async function replyComment(commentId, message) {
 
 async function sendDM(recipient, text, buttons = []) {
   const cleanText = String(text || '').trim();
-  if (!recipient || !cleanText) return;
+  const validButtons = normalizeButtons(buttons);
+  if (!recipient || (!cleanText && validButtons.length === 0)) return;
 
   const recipientObj = typeof recipient === 'string' ? { id: recipient } : recipient;
+  const senderEndpoint = IG_USER_ID ? `${IG_USER_ID}/messages` : 'me/messages';
+
+  const urlButtons = validButtons.filter(b => /^https?:\/\//i.test(b.url));
+  const replyButtons = validButtons.filter(b => !/^https?:\/\//i.test(b.url));
+
+  // Se houver botões com URL, envia template de botão (Instagram)
+  if (urlButtons.length > 0) {
+    const payload = {
+      recipient: recipientObj,
+      message: {
+        attachment: {
+          type: 'template',
+          payload: {
+            template_type: 'button',
+            text: (cleanText || 'Escolha uma opção abaixo:').slice(0, 640),
+            buttons: urlButtons.slice(0, 3).map(b => ({
+              type: 'web_url',
+              url: b.url,
+              title: b.title
+            }))
+          }
+        }
+      }
+    };
+    await metaPost(senderEndpoint, payload);
+    state.stats.dmsSent++;
+    persistState();
+    return;
+  }
+
   const payload = {
     recipient: recipientObj,
-    message: { text: cleanText }
+    message: {
+      text: cleanText || 'Escolha uma opção:'
+    }
   };
 
-  if (buttons && buttons.length > 0) {
-    payload.message.quick_replies = buttons.slice(0, 3).map(btn => ({
+  if (replyButtons.length > 0) {
+    payload.message.quick_replies = replyButtons.slice(0, 3).map(btn => ({
       content_type: 'text',
-      title: String(btn.title || '').slice(0, 20),
-      payload: `FLOW_STEP:${btn.nextStepId}`
+      title: btn.title,
+      payload: btn.nextStepId
+        ? `FLOW_STEP:${btn.nextStepId}`
+        : `BTN_REPLY:${encodeURIComponent(btn.replyText || btn.title)}`
     }));
   }
 
-  const senderEndpoint = IG_USER_ID ? `${IG_USER_ID}/messages` : 'me/messages';
   await metaPost(senderEndpoint, payload);
   state.stats.dmsSent++;
   persistState();
@@ -239,8 +307,8 @@ async function processIncomingMessageEvent(msgEvent) {
 
   upsertContact(senderId);
 
-  const qrPayload = msgEvent?.message?.quick_reply?.payload;
-  if (qrPayload && qrPayload.startsWith('FLOW_STEP:')) {
+  const qrPayload = String(msgEvent?.message?.quick_reply?.payload || '');
+  if (qrPayload.startsWith('FLOW_STEP:')) {
     const targetStepId = qrPayload.replace('FLOW_STEP:', '');
     for (const flow of state.flows || []) {
       const step = (flow.steps || []).find(s => s.id === targetStepId);
@@ -248,6 +316,14 @@ async function processIncomingMessageEvent(msgEvent) {
         await sendDM(senderId, step.message, step.buttons || []);
         break;
       }
+    }
+    return;
+  }
+
+  if (qrPayload.startsWith('BTN_REPLY:')) {
+    const replyText = decodeURIComponent(qrPayload.replace('BTN_REPLY:', '')).trim();
+    if (replyText) {
+      await sendDM(senderId, replyText);
     }
     return;
   }
@@ -280,8 +356,8 @@ async function processIncomingMessageEvent(msgEvent) {
     state.stats.storiesReplied++;
     persistState();
   }
-  if (String(rule.dmText || '').trim()) {
-    await sendDM(senderId, rule.dmText);
+  if (String(rule.dmText || '').trim() || (Array.isArray(rule.buttons) && rule.buttons.length > 0)) {
+    await sendDM(senderId, rule.dmText, rule.buttons || []);
   }
   if (rule.flowId) {
     await sendFlowStep(senderId, rule.flowId);
@@ -344,8 +420,8 @@ app.post('/webhook', async (req, res) => {
           if (String(rule.publicReply || '').trim() && commentId) {
             await replyComment(commentId, rule.publicReply);
           }
-          if (String(rule.dmText || '').trim()) {
-            await sendDM(commentId ? { comment_id: commentId } : fromId, rule.dmText);
+          if (String(rule.dmText || '').trim() || (Array.isArray(rule.buttons) && rule.buttons.length > 0)) {
+            await sendDM(commentId ? { comment_id: commentId } : fromId, rule.dmText, rule.buttons || []);
           }
           if (rule.flowId) {
             await sendFlowStep(fromId, rule.flowId);
@@ -435,15 +511,17 @@ app.post('/api/automations', (req, res) => {
     body.flowId ?? body.flow_id ?? body.fluxoId ?? ''
   ).trim();
 
+  const buttons = normalizeButtons(body.buttons || body.botoes || []);
+
   if (!['comment', 'story', 'dm'].includes(type)) {
     return res.status(400).json({
       error: `Tipo de gatilho inválido ("${rawType}"). Use comment, story ou dm.`
     });
   }
 
-  if (!publicReply && !dmText && !flowId) {
+  if (!publicReply && !dmText && !flowId && buttons.length === 0) {
     return res.status(400).json({
-      error: 'Informe uma resposta pública, mensagem no Direct ou fluxo.'
+      error: 'Informe uma resposta pública, mensagem no Direct, botão ou fluxo.'
     });
   }
 
@@ -454,6 +532,7 @@ app.post('/api/automations', (req, res) => {
     publicReply,
     dmText,
     flowId,
+    buttons,
     active: body.active !== false
   };
 
