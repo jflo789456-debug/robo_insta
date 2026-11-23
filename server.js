@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 app.use(express.json());
@@ -10,8 +11,10 @@ const META_ACCESS_TOKEN = (process.env.META_ACCESS_TOKEN || '').trim();
 const VERIFY_TOKEN = (process.env.VERIFY_TOKEN || 'mvt_webhook_2026').trim();
 const IG_USER_ID = (process.env.IG_USER_ID || '').trim();
 
-// --- BANCO DE DADOS EM MEMÓRIA ---
-const state = {
+const DATA_DIR = path.join(__dirname, 'data');
+const STATE_FILE = path.join(DATA_DIR, 'state.json');
+
+const DEFAULT_STATE = {
   mode: META_ACCESS_TOKEN ? 'production' : 'simulation',
   stats: {
     commentsReplied: 0,
@@ -21,7 +24,7 @@ const state = {
   automations: [
     {
       id: 'auto_1',
-      type: 'comment', // comment | story | dm
+      type: 'comment',
       keyword: 'QUERO',
       publicReply: 'Te enviei as informações no Direct! 😊',
       dmText: 'Olá! Vi seu comentário. Clique abaixo para escolher o que você precisa:',
@@ -73,20 +76,87 @@ const state = {
       ]
     }
   ],
-  contacts: [] // { id, username, lastInteraction }
+  contacts: []
 };
+
+function loadInitialState() {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const raw = fs.readFileSync(STATE_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      return {
+        mode: parsed.mode === 'simulation' || parsed.mode === 'production'
+          ? parsed.mode
+          : (META_ACCESS_TOKEN ? 'production' : 'simulation'),
+        stats: {
+          commentsReplied: Number(parsed.stats?.commentsReplied || 0),
+          storiesReplied: Number(parsed.stats?.storiesReplied || 0),
+          dmsSent: Number(parsed.stats?.dmsSent || 0)
+        },
+        automations: Array.isArray(parsed.automations) ? parsed.automations : [],
+        flows: Array.isArray(parsed.flows) ? parsed.flows : DEFAULT_STATE.flows,
+        contacts: Array.isArray(parsed.contacts) ? parsed.contacts : []
+      };
+    }
+  } catch (err) {
+    console.error('Erro ao carregar state.json, usando estado padrão:', err.message);
+  }
+  return JSON.parse(JSON.stringify(DEFAULT_STATE));
+}
+
+const state = loadInitialState();
+
+function persistState() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Erro ao salvar state.json:', err.message);
+  }
+}
+
+// Deduplicação simples de eventos recentes (evita disparo duplo em reenvios da Meta)
+const recentEventIds = new Map();
+function isDuplicateEvent(eventId) {
+  if (!eventId) return false;
+  const now = Date.now();
+  // Limpa entradas com mais de 10 minutos
+  for (const [key, ts] of recentEventIds.entries()) {
+    if (now - ts > 10 * 60 * 1000) recentEventIds.delete(key);
+  }
+  if (recentEventIds.has(eventId)) return true;
+  recentEventIds.set(eventId, now);
+  return false;
+}
+
+// Retorna apenas automações válidas, ativas e com palavra-chave não vazia
+function getValidAutomationsByType(type) {
+  return (state.automations || []).filter(a => {
+    if (!a || a.active !== true || a.type !== type) return false;
+    const kw = String(a.keyword || '').trim();
+    if (kw.length === 0) return false;
+    const hasFlow = Boolean(a.flowId && (state.flows || []).some(f => f.id === a.flowId));
+    const hasText = Boolean(String(a.dmText || '').trim() || String(a.publicReply || '').trim());
+    return hasFlow || hasText;
+  });
+}
 
 // Registra contato na janela de 24h
 function upsertContact(id, username = 'Seguidor') {
   if (!id) return;
+  const cleanId = String(id).trim();
+  if (!cleanId) return;
   const now = Date.now();
-  const idx = state.contacts.findIndex(c => c.id === id);
+  const idx = state.contacts.findIndex(c => String(c.id) === cleanId);
   if (idx >= 0) {
     state.contacts[idx].lastInteraction = now;
     if (username && username !== 'Seguidor') state.contacts[idx].username = username;
   } else {
-    state.contacts.unshift({ id, username, lastInteraction: now });
+    state.contacts.unshift({ id: cleanId, username, lastInteraction: now });
   }
+  persistState();
 }
 
 function getActive24hContacts() {
@@ -113,22 +183,27 @@ async function metaPost(endpoint, body) {
 }
 
 async function replyComment(commentId, message) {
-  if (!message) return;
-  await metaPost(`${commentId}/replies`, { message });
+  const cleanMsg = String(message || '').trim();
+  if (!commentId || !cleanMsg) return;
+  await metaPost(`${commentId}/replies`, { message: cleanMsg });
   state.stats.commentsReplied++;
+  persistState();
 }
 
 async function sendDM(recipient, text, buttons = []) {
+  const cleanText = String(text || '').trim();
+  if (!recipient || !cleanText) return;
+
   const recipientObj = typeof recipient === 'string' ? { id: recipient } : recipient;
   const payload = {
     recipient: recipientObj,
-    message: { text }
+    message: { text: cleanText }
   };
 
   if (buttons && buttons.length > 0) {
     payload.message.quick_replies = buttons.slice(0, 3).map(btn => ({
       content_type: 'text',
-      title: btn.title.slice(0, 20),
+      title: String(btn.title || '').slice(0, 20),
       payload: `FLOW_STEP:${btn.nextStepId}`
     }));
   }
@@ -136,29 +211,37 @@ async function sendDM(recipient, text, buttons = []) {
   const senderEndpoint = IG_USER_ID ? `${IG_USER_ID}/messages` : 'me/messages';
   await metaPost(senderEndpoint, payload);
   state.stats.dmsSent++;
+  persistState();
 }
 
 async function sendFlowStep(recipient, flowId, stepId) {
-  const flow = state.flows.find(f => f.id === flowId);
-  if (!flow) return;
+  if (!flowId) return;
+  const flow = (state.flows || []).find(f => f.id === flowId);
+  if (!flow || !Array.isArray(flow.steps) || flow.steps.length === 0) return;
   const step = stepId ? flow.steps.find(s => s.id === stepId) : flow.steps[0];
-  if (!step) return;
+  if (!step || !String(step.message || '').trim()) return;
   await sendDM(recipient, step.message, step.buttons || []);
 }
 
 async function processIncomingMessageEvent(msgEvent) {
-  const senderId = msgEvent.sender?.id;
-  if (!senderId || senderId === IG_USER_ID) return;
-  if (msgEvent.message?.is_echo) return;
+  const senderId = String(msgEvent?.sender?.id || '').trim();
+  if (!senderId || (IG_USER_ID && senderId === IG_USER_ID)) return;
+  if (msgEvent?.message?.is_echo) return;
+
+  const mid = msgEvent?.message?.mid;
+  if (mid && isDuplicateEvent(`msg:${mid}`)) {
+    console.log(`⏭️ Evento duplicado ignorado (${mid})`);
+    return;
+  }
 
   upsertContact(senderId);
 
   // Clique em botão de fluxo (Quick Reply)
-  const qrPayload = msgEvent.message?.quick_reply?.payload;
+  const qrPayload = msgEvent?.message?.quick_reply?.payload;
   if (qrPayload && qrPayload.startsWith('FLOW_STEP:')) {
     const targetStepId = qrPayload.replace('FLOW_STEP:', '');
-    for (const flow of state.flows) {
-      const step = flow.steps.find(s => s.id === targetStepId);
+    for (const flow of state.flows || []) {
+      const step = (flow.steps || []).find(s => s.id === targetStepId);
       if (step) {
         await sendDM(senderId, step.message, step.buttons || []);
         break;
@@ -167,22 +250,42 @@ async function processIncomingMessageEvent(msgEvent) {
     return;
   }
 
-  const text = (msgEvent.message?.text || '').toUpperCase();
+  const rawText = String(msgEvent?.message?.text || '').trim().toUpperCase();
+  if (!rawText) return;
+
   const isStoryReply = Boolean(
-    msgEvent.message?.reply_to?.story ||
-    (msgEvent.message?.attachments || []).some(a => a.type === 'story_mention')
+    msgEvent?.message?.reply_to?.story ||
+    (msgEvent?.message?.attachments || []).some(a => a.type === 'story_mention')
   );
 
   const targetType = isStoryReply ? 'story' : 'dm';
-  const rule = state.automations.find(
-    a => a.active && a.type === targetType && (!a.keyword || text.includes(a.keyword.toUpperCase()))
-  );
+  const activeRules = getValidAutomationsByType(targetType);
 
-  if (rule) {
-    console.log(`📩 ${isStoryReply ? 'Story' : 'DM'} capturada de ${senderId}: ${msgEvent.message?.text || ''}`);
-    if (isStoryReply) state.stats.storiesReplied++;
-    if (rule.dmText) await sendDM(senderId, rule.dmText);
-    if (rule.flowId) await sendFlowStep(senderId, rule.flowId);
+  if (activeRules.length === 0) {
+    console.log(`ℹ️ Nenhum gatilho ativo de ${targetType} para "${rawText}". Nenhuma mensagem enviada.`);
+    return;
+  }
+
+  const rule = activeRules.find(a => {
+    const kw = String(a.keyword || '').trim().toUpperCase();
+    return kw.length > 0 && rawText.includes(kw);
+  });
+
+  if (!rule) {
+    console.log(`ℹ️ Mensagem de ${senderId} ("${rawText}") não corresponde a nenhum gatilho ativo de ${targetType}.`);
+    return;
+  }
+
+  console.log(`📩 ${isStoryReply ? 'Story' : 'DM'} capturada de ${senderId} | Gatilho: ${rule.keyword}`);
+  if (isStoryReply) {
+    state.stats.storiesReplied++;
+    persistState();
+  }
+  if (String(rule.dmText || '').trim()) {
+    await sendDM(senderId, rule.dmText);
+  }
+  if (rule.flowId) {
+    await sendFlowStep(senderId, rule.flowId);
   }
 }
 
@@ -205,29 +308,52 @@ app.post('/webhook', async (req, res) => {
   if (state.mode !== 'production') return;
 
   try {
-    const entries = req.body.entry || [];
+    const entries = req.body?.entry || [];
     for (const entry of entries) {
       // 1. Comentários em Posts/Reels e eventuais mensagens via changes
       for (const change of entry.changes || []) {
         if (change.field === 'comments') {
           const val = change.value || {};
-          const fromId = val.from?.id;
+          const fromId = String(val.from?.id || '').trim();
           const username = val.from?.username || 'Seguidor';
-          const text = (val.text || '').toUpperCase();
-          const commentId = val.id;
+          const rawText = String(val.text || '').trim().toUpperCase();
+          const commentId = String(val.id || '').trim();
 
-          if (!fromId || fromId === IG_USER_ID) continue;
+          if (!fromId || (IG_USER_ID && fromId === IG_USER_ID)) continue;
+          if (!rawText) continue;
+
+          if (commentId && isDuplicateEvent(`comment:${commentId}`)) {
+            console.log(`⏭️ Comentário duplicado ignorado (${commentId})`);
+            continue;
+          }
+
           upsertContact(fromId, username);
 
-          const rule = state.automations.find(
-            a => a.active && a.type === 'comment' && text.includes(a.keyword.toUpperCase())
-          );
+          const activeCommentRules = getValidAutomationsByType('comment');
+          if (activeCommentRules.length === 0) {
+            console.log(`ℹ️ Nenhum gatilho ativo de comment para comentário de @${username}. Nenhuma ação tomada.`);
+            continue;
+          }
 
-          if (rule) {
-            console.log(`💬 Comentário capturado de @${username}: ${val.text}`);
-            if (rule.publicReply) await replyComment(commentId, rule.publicReply);
-            if (rule.dmText) await sendDM({ comment_id: commentId }, rule.dmText);
-            if (rule.flowId) await sendFlowStep(fromId, rule.flowId);
+          const rule = activeCommentRules.find(a => {
+            const kw = String(a.keyword || '').trim().toUpperCase();
+            return kw.length > 0 && rawText.includes(kw);
+          });
+
+          if (!rule) {
+            console.log(`ℹ️ Comentário de @${username} ("${rawText}") não corresponde a nenhum gatilho ativo.`);
+            continue;
+          }
+
+          console.log(`💬 Comentário capturado de @${username} | Gatilho: ${rule.keyword}`);
+          if (String(rule.publicReply || '').trim() && commentId) {
+            await replyComment(commentId, rule.publicReply);
+          }
+          if (String(rule.dmText || '').trim()) {
+            await sendDM(commentId ? { comment_id: commentId } : fromId, rule.dmText);
+          }
+          if (rule.flowId) {
+            await sendFlowStep(fromId, rule.flowId);
           }
         } else if (change.field === 'messages' && change.value) {
           await processIncomingMessageEvent(change.value);
@@ -252,7 +378,9 @@ app.get('/api/state', (req, res) => {
     stats: {
       ...state.stats,
       activeFlows: state.flows.length,
-      activeAutomations: state.automations.filter(a => a.active).length,
+      activeAutomations: getValidAutomationsByType('comment').length +
+        getValidAutomationsByType('story').length +
+        getValidAutomationsByType('dm').length,
       active24hContacts: getActive24hContacts().length
     },
     automations: state.automations,
@@ -263,34 +391,76 @@ app.get('/api/state', (req, res) => {
 
 app.post('/api/mode', (req, res) => {
   const { mode } = req.body;
-  if (mode === 'simulation' || mode === 'production') state.mode = mode;
+  if (mode === 'simulation' || mode === 'production') {
+    state.mode = mode;
+    persistState();
+  }
   res.json({ mode: state.mode });
 });
 
 app.post('/api/automations', (req, res) => {
-  const item = { id: 'auto_' + Date.now(), active: true, ...req.body };
+  const type = String(req.body?.type || '').trim();
+  const keyword = String(req.body?.keyword || '').trim().toUpperCase();
+  const publicReply = String(req.body?.publicReply || '').trim();
+  const dmText = String(req.body?.dmText || '').trim();
+  const flowId = String(req.body?.flowId || '').trim();
+
+  if (!['comment', 'story', 'dm'].includes(type)) {
+    return res.status(400).json({ error: 'Tipo de gatilho inválido (use comment, story ou dm).' });
+  }
+  if (!keyword) {
+    return res.status(400).json({ error: 'A palavra-chave é obrigatória para evitar disparos indevidos.' });
+  }
+  if (!publicReply && !dmText && !flowId) {
+    return res.status(400).json({ error: 'Informe uma resposta pública, mensagem no Direct ou fluxo.' });
+  }
+
+  const item = {
+    id: 'auto_' + Date.now(),
+    type,
+    keyword,
+    publicReply,
+    dmText,
+    flowId,
+    active: req.body?.active !== false
+  };
   state.automations.unshift(item);
+  persistState();
   res.json(item);
 });
 
 app.delete('/api/automations/:id', (req, res) => {
-  state.automations = state.automations.filter(a => a.id !== req.params.id);
-  res.json({ ok: true });
+  const targetId = String(req.params.id || '').trim();
+  const beforeCount = state.automations.length;
+  state.automations = state.automations.filter(a => String(a.id) !== targetId);
+
+  if (state.automations.length === beforeCount) {
+    return res.status(404).json({ ok: false, error: 'Gatilho não encontrado.' });
+  }
+
+  persistState();
+  res.json({ ok: true, remaining: state.automations.length });
 });
 
 app.post('/api/flows', (req, res) => {
   const flow = { id: 'flow_' + Date.now(), ...req.body };
   state.flows.unshift(flow);
+  persistState();
   res.json(flow);
 });
 
 app.delete('/api/flows/:id', (req, res) => {
-  state.flows = state.flows.filter(f => f.id !== req.params.id);
+  const targetId = String(req.params.id || '').trim();
+  state.flows = state.flows.filter(f => String(f.id) !== targetId);
+  persistState();
   res.json({ ok: true });
 });
 
 app.post('/api/broadcast', async (req, res) => {
-  const { message } = req.body;
+  const message = String(req.body?.message || '').trim();
+  if (!message) {
+    return res.status(400).json({ error: 'Mensagem de broadcast não pode estar vazia.' });
+  }
   const targets = getActive24hContacts();
   if (state.mode === 'production') {
     for (const contact of targets) {
@@ -298,10 +468,11 @@ app.post('/api/broadcast', async (req, res) => {
     }
   } else {
     state.stats.dmsSent += targets.length;
+    persistState();
   }
   res.json({ sent: targets.length, mode: state.mode });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 InstaFlow Studio rodando na porta ${PORT}`);
+  console.log(`🚀 InstaFlow Studio rodando na porta ${PORT} | Modo: ${state.mode} | Gatilhos carregados: ${state.automations.length}`);
 });
