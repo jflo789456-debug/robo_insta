@@ -122,7 +122,6 @@ const recentEventIds = new Map();
 function isDuplicateEvent(eventId) {
   if (!eventId) return false;
   const now = Date.now();
-  // Limpa entradas com mais de 10 minutos
   for (const [key, ts] of recentEventIds.entries()) {
     if (now - ts > 10 * 60 * 1000) recentEventIds.delete(key);
   }
@@ -236,7 +235,6 @@ async function processIncomingMessageEvent(msgEvent) {
 
   upsertContact(senderId);
 
-  // Clique em botão de fluxo (Quick Reply)
   const qrPayload = msgEvent?.message?.quick_reply?.payload;
   if (qrPayload && qrPayload.startsWith('FLOW_STEP:')) {
     const targetStepId = qrPayload.replace('FLOW_STEP:', '');
@@ -310,7 +308,6 @@ app.post('/webhook', async (req, res) => {
   try {
     const entries = req.body?.entry || [];
     for (const entry of entries) {
-      // 1. Comentários em Posts/Reels e eventuais mensagens via changes
       for (const change of entry.changes || []) {
         if (change.field === 'comments') {
           const val = change.value || {};
@@ -360,7 +357,6 @@ app.post('/webhook', async (req, res) => {
         }
       }
 
-      // 2. DMs, Respostas a Stories e Cliques em Fluxos
       for (const msgEvent of entry.messaging || []) {
         await processIncomingMessageEvent(msgEvent);
       }
@@ -399,20 +395,60 @@ app.post('/api/mode', (req, res) => {
 });
 
 app.post('/api/automations', (req, res) => {
-  const type = String(req.body?.type || '').trim();
-  const keyword = String(req.body?.keyword || '').trim().toUpperCase();
-  const publicReply = String(req.body?.publicReply || '').trim();
-  const dmText = String(req.body?.dmText || '').trim();
-  const flowId = String(req.body?.flowId || '').trim();
+  const body = req.body || {};
+
+  const rawType = String(body.type || body.triggerType || body.canal || '')
+    .trim()
+    .toLowerCase();
+
+  const typeMap = {
+    comment: 'comment',
+    comentario: 'comment',
+    comentário: 'comment',
+    comments: 'comment',
+    story: 'story',
+    stories: 'story',
+    dm: 'dm',
+    direct: 'dm',
+    mensagem: 'dm',
+    message: 'dm'
+  };
+  const type = typeMap[rawType] || rawType;
+
+  const keyword = String(
+    body.keyword ?? body.trigger ?? body.palavraChave ?? body.palavra ?? ''
+  )
+    .trim()
+    .toUpperCase();
+
+  const publicReply = String(
+    body.publicReply ?? body.public_reply ?? body.respostaPublica ?? ''
+  ).trim();
+
+  const dmText = String(
+    body.dmText ?? body.dm_text ?? body.message ?? body.text ?? body.mensagem ?? ''
+  ).trim();
+
+  const flowId = String(
+    body.flowId ?? body.flow_id ?? body.fluxoId ?? ''
+  ).trim();
 
   if (!['comment', 'story', 'dm'].includes(type)) {
-    return res.status(400).json({ error: 'Tipo de gatilho inválido (use comment, story ou dm).' });
+    return res.status(400).json({
+      error: `Tipo de gatilho inválido ("${rawType}"). Use comment, story ou dm.`
+    });
   }
+
   if (!keyword) {
-    return res.status(400).json({ error: 'A palavra-chave é obrigatória para evitar disparos indevidos.' });
+    return res.status(400).json({
+      error: 'A palavra-chave é obrigatória para evitar disparos indevidos.'
+    });
   }
+
   if (!publicReply && !dmText && !flowId) {
-    return res.status(400).json({ error: 'Informe uma resposta pública, mensagem no Direct ou fluxo.' });
+    return res.status(400).json({
+      error: 'Informe uma resposta pública, mensagem no Direct ou fluxo.'
+    });
   }
 
   const item = {
@@ -422,8 +458,9 @@ app.post('/api/automations', (req, res) => {
     publicReply,
     dmText,
     flowId,
-    active: req.body?.active !== false
+    active: body.active !== false
   };
+
   state.automations.unshift(item);
   persistState();
   res.json(item);
