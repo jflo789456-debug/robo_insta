@@ -130,16 +130,20 @@ function isDuplicateEvent(eventId) {
   return false;
 }
 
-// Retorna apenas automações válidas, ativas e com palavra-chave não vazia
+// Retorna apenas automações ativas e com alguma ação configurada
 function getValidAutomationsByType(type) {
   return (state.automations || []).filter(a => {
     if (!a || a.active !== true || a.type !== type) return false;
-    const kw = String(a.keyword || '').trim();
-    if (kw.length === 0) return false;
     const hasFlow = Boolean(a.flowId && (state.flows || []).some(f => f.id === a.flowId));
     const hasText = Boolean(String(a.dmText || '').trim() || String(a.publicReply || '').trim());
     return hasFlow || hasText;
   });
+}
+
+function matchesKeyword(rule, upperText) {
+  const kw = String(rule?.keyword || '').trim().toUpperCase();
+  if (!kw) return true; // palavra-chave vazia = qualquer texto
+  return upperText.includes(kw);
 }
 
 // Registra contato na janela de 24h
@@ -264,17 +268,14 @@ async function processIncomingMessageEvent(msgEvent) {
     return;
   }
 
-  const rule = activeRules.find(a => {
-    const kw = String(a.keyword || '').trim().toUpperCase();
-    return kw.length > 0 && rawText.includes(kw);
-  });
+  const rule = activeRules.find(a => matchesKeyword(a, rawText));
 
   if (!rule) {
     console.log(`ℹ️ Mensagem de ${senderId} ("${rawText}") não corresponde a nenhum gatilho ativo de ${targetType}.`);
     return;
   }
 
-  console.log(`📩 ${isStoryReply ? 'Story' : 'DM'} capturada de ${senderId} | Gatilho: ${rule.keyword}`);
+  console.log(`📩 ${isStoryReply ? 'Story' : 'DM'} capturada de ${senderId} | Gatilho: ${rule.keyword || '(qualquer texto)'}`);
   if (isStoryReply) {
     state.stats.storiesReplied++;
     persistState();
@@ -332,17 +333,14 @@ app.post('/webhook', async (req, res) => {
             continue;
           }
 
-          const rule = activeCommentRules.find(a => {
-            const kw = String(a.keyword || '').trim().toUpperCase();
-            return kw.length > 0 && rawText.includes(kw);
-          });
+          const rule = activeCommentRules.find(a => matchesKeyword(a, rawText));
 
           if (!rule) {
             console.log(`ℹ️ Comentário de @${username} ("${rawText}") não corresponde a nenhum gatilho ativo.`);
             continue;
           }
 
-          console.log(`💬 Comentário capturado de @${username} | Gatilho: ${rule.keyword}`);
+          console.log(`💬 Comentário capturado de @${username} | Gatilho: ${rule.keyword || '(qualquer texto)'}`);
           if (String(rule.publicReply || '').trim() && commentId) {
             await replyComment(commentId, rule.publicReply);
           }
@@ -406,12 +404,16 @@ app.post('/api/automations', (req, res) => {
     comentario: 'comment',
     comentário: 'comment',
     comments: 'comment',
+    'comentário em post / reel': 'comment',
+    'comentario em post / reel': 'comment',
     story: 'story',
     stories: 'story',
+    'resposta a story': 'story',
     dm: 'dm',
     direct: 'dm',
     mensagem: 'dm',
-    message: 'dm'
+    message: 'dm',
+    'mensagem direta (dm)': 'dm'
   };
   const type = typeMap[rawType] || rawType;
 
@@ -436,12 +438,6 @@ app.post('/api/automations', (req, res) => {
   if (!['comment', 'story', 'dm'].includes(type)) {
     return res.status(400).json({
       error: `Tipo de gatilho inválido ("${rawType}"). Use comment, story ou dm.`
-    });
-  }
-
-  if (!keyword) {
-    return res.status(400).json({
-      error: 'A palavra-chave é obrigatória para evitar disparos indevidos.'
     });
   }
 
